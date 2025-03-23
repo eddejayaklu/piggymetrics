@@ -2,81 +2,132 @@ package com.piggymetrics.auth.config;
 
 import com.piggymetrics.auth.service.security.MongoUserDetailsService;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
 import org.springframework.core.env.Environment;
-import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.crypto.password.NoOpPasswordEncoder;
-import org.springframework.security.oauth2.config.annotation.configurers.ClientDetailsServiceConfigurer;
-import org.springframework.security.oauth2.config.annotation.web.configuration.AuthorizationServerConfigurerAdapter;
-import org.springframework.security.oauth2.config.annotation.web.configuration.EnableAuthorizationServer;
-import org.springframework.security.oauth2.config.annotation.web.configurers.AuthorizationServerEndpointsConfigurer;
-import org.springframework.security.oauth2.config.annotation.web.configurers.AuthorizationServerSecurityConfigurer;
-import org.springframework.security.oauth2.provider.token.TokenStore;
-import org.springframework.security.oauth2.provider.token.store.InMemoryTokenStore;
+import org.springframework.security.config.Customizer;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
+import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
+import org.springframework.security.oauth2.server.authorization.client.InMemoryRegisteredClientRepository;
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
+import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
+import org.springframework.security.oauth2.server.authorization.config.annotation.web.configuration.OAuth2AuthorizationServerConfiguration;
+import org.springframework.security.oauth2.server.authorization.config.annotation.web.configurers.OAuth2AuthorizationServerConfigurer;
+import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
+import org.springframework.security.oauth2.server.authorization.settings.ClientSettings;
+import org.springframework.security.oauth2.server.authorization.settings.TokenSettings;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
+
+import java.time.Duration;
+import java.util.UUID;
 
 /**
- * @author cdov
+ * OAuth2 Authorization Server Configuration
  */
 @Configuration
-@EnableAuthorizationServer
-public class OAuth2AuthorizationConfig extends AuthorizationServerConfigurerAdapter {
-
-    private TokenStore tokenStore = new InMemoryTokenStore();
-    private final String NOOP_PASSWORD_ENCODE = "{noop}";
-
-    @Autowired
-    @Qualifier("authenticationManagerBean")
-    private AuthenticationManager authenticationManager;
-
-    @Autowired
-    private MongoUserDetailsService userDetailsService;
+public class OAuth2AuthorizationConfig {
 
     @Autowired
     private Environment env;
 
-    @Override
-    public void configure(ClientDetailsServiceConfigurer clients) throws Exception {
+    @Bean
+    @Order(1)
+    public SecurityFilterChain authorizationServerSecurityFilterChain(HttpSecurity http) throws Exception {
+        OAuth2AuthorizationServerConfiguration.applyDefaultSecurity(http);
 
-        // TODO persist clients details
+        http.getConfigurer(OAuth2AuthorizationServerConfigurer.class)
+                .oidc(Customizer.withDefaults());
 
-        // @formatter:off
-        clients.inMemory()
-                .withClient("browser")
-                .authorizedGrantTypes("refresh_token", "password")
-                .scopes("ui")
-                .and()
-                .withClient("account-service")
-                .secret(env.getProperty("ACCOUNT_SERVICE_PASSWORD"))
-                .authorizedGrantTypes("client_credentials", "refresh_token")
-                .scopes("server")
-                .and()
-                .withClient("statistics-service")
-                .secret(env.getProperty("STATISTICS_SERVICE_PASSWORD"))
-                .authorizedGrantTypes("client_credentials", "refresh_token")
-                .scopes("server")
-                .and()
-                .withClient("notification-service")
-                .secret(env.getProperty("NOTIFICATION_SERVICE_PASSWORD"))
-                .authorizedGrantTypes("client_credentials", "refresh_token")
-                .scopes("server");
-        // @formatter:on
+        http
+                .exceptionHandling(exceptions ->
+                        exceptions.authenticationEntryPoint(new LoginUrlAuthenticationEntryPoint("/login")))
+                .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()));
+
+        return http.build();
     }
 
-    @Override
-    public void configure(AuthorizationServerEndpointsConfigurer endpoints) throws Exception {
-        endpoints
-                .tokenStore(tokenStore)
-                .authenticationManager(authenticationManager)
-                .userDetailsService(userDetailsService);
+    @Bean
+    public RegisteredClientRepository registeredClientRepository() {
+        // Helper to generate a unique client secret based on clientId and the base secret value
+        // This ensures that even if the base secret is the same, each client secret is unique.
+        String browserSecret = uniqueSecret("browser", env.getProperty("BROWSER_SERVICE_PASSWORD", "default-browser-password"));
+        String accountSecret = uniqueSecret("account-service", env.getProperty("ACCOUNT_SERVICE_PASSWORD"));
+        String statisticsSecret = uniqueSecret("statistics-service", env.getProperty("STATISTICS_SERVICE_PASSWORD"));
+        String notificationSecret = uniqueSecret("notification-service", env.getProperty("NOTIFICATION_SERVICE_PASSWORD"));
+
+        RegisteredClient browserClient = RegisteredClient.withId(UUID.randomUUID().toString())
+                .clientId("browser")
+                // For public clients, no secret is required
+                .clientAuthenticationMethod(ClientAuthenticationMethod.NONE)
+                .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
+                .authorizationGrantType(AuthorizationGrantType.PASSWORD) // Note: password grant is deprecated
+                .scope("ui")
+                .clientSettings(ClientSettings.builder().requireAuthorizationConsent(false).build())
+                .build();
+
+        RegisteredClient accountServiceClient = RegisteredClient.withId(UUID.randomUUID().toString())
+                .clientId("account-service")
+                .clientSecret(accountSecret)
+                .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+                .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
+                .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
+                .scope("server")
+                .clientSettings(ClientSettings.builder().requireAuthorizationConsent(false).build())
+                .build();
+
+        RegisteredClient statisticsServiceClient = RegisteredClient.withId(UUID.randomUUID().toString())
+                .clientId("statistics-service")
+                .clientSecret(statisticsSecret)
+                .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+                .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
+                .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
+                .scope("server")
+                .clientSettings(ClientSettings.builder().requireAuthorizationConsent(false).build())
+                .build();
+
+        RegisteredClient notificationServiceClient = RegisteredClient.withId(UUID.randomUUID().toString())
+                .clientId("notification-service")
+                .clientSecret(notificationSecret)
+                .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+                .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
+                .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
+                .scope("server")
+                .clientSettings(ClientSettings.builder().requireAuthorizationConsent(false).build())
+                .build();
+
+        return new InMemoryRegisteredClientRepository(
+                browserClient,
+                accountServiceClient,
+                statisticsServiceClient,
+                notificationServiceClient
+        );
     }
 
-    @Override
-    public void configure(AuthorizationServerSecurityConfigurer oauthServer) throws Exception {
-        oauthServer
-                .tokenKeyAccess("permitAll()")
-                .checkTokenAccess("isAuthenticated()")
-                .passwordEncoder(NoOpPasswordEncoder.getInstance());
+    @Bean
+    public AuthorizationServerSettings authorizationServerSettings() {
+        return AuthorizationServerSettings.builder().build();
     }
 
+    @Bean
+    public TokenSettings tokenSettings() {
+        return TokenSettings.builder()
+                .accessTokenTimeToLive(Duration.ofMinutes(30))
+                .refreshTokenTimeToLive(Duration.ofDays(1))
+                .build();
+    }
+
+    /**
+     * Generate a unique secret by appending the clientId to the base secret.
+     * This way, even if the base secret is identical across clients, the resulting secret will be unique.
+     */
+    private String uniqueSecret(String clientId, String baseSecret) {
+        // Ensure baseSecret is not null; if it is, use a default value or generate a random one.
+        if (baseSecret == null) {
+            baseSecret = UUID.randomUUID().toString();
+        }
+        return "{noop}" + clientId + "-" + baseSecret;
+    }
 }

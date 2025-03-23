@@ -1,0 +1,11 @@
+spring:
+  application:
+    name: auth-service
+  config:
+    import: "optional:configserver:http://localhost:8888"
+  cloud:
+    config:
+      # Credentials to access the Config Server (matching the Config Server settings).
+      username: user
+      password: 123456  # You can define this environment variable or set a value here.
+
