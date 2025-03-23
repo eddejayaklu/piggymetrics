@@ -1,15 +1,20 @@
 spring:
+  application:
+    name: config-server
   cloud:
     config:
       server:
         native:
           search-locations: classpath:/shared
   profiles:
-     active: native
+    # Activate the "native" profile so that the native mode is used.
+    active: native
   security:
     user:
-      password: ${CONFIG_SERVICE_PASSWORD}
+      # Basic authentication credentials for accessing the config server.
+      name: user
+      password: 123456
 
 server:
+  # The port on which the config server will run.
   port: 8888
-

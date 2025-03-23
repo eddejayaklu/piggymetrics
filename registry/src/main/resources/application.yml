@@ -2,10 +2,10 @@ spring:
   application:
     name: registry
   config:
-    import: "optional:configserver:http://localhost:8888"
+    import: "configserver:http://localhost:8888"
   cloud:
     config:
-      password: ${CONFIG_SERVICE_PASSWORD}
+      password: 123456
       username: user
 
 eureka:
